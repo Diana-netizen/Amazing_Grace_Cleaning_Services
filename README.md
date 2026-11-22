@@ -6,7 +6,6 @@ A local Python dashboard for showcasing Amazing Grace Cleaning Services' busines
 
 - This application runs locally. It does not deploy to Azure, Render, Streamlit Community Cloud, or any other cloud host.
 - No Power BI licence is required because the charts are recreated in Streamlit/Plotly rather than embedding Power BI.
-- The included workbook is a **simulated demonstration dataset**. Forecast outputs are demonstrations of the pipeline and must not be used as actual business forecasts.
 - The sales forecast uses completed-job quoted amount as a proxy because a separate final invoiced amount is not available in the included workbook.
 
 ## Project structure
