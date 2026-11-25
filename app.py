@@ -6,6 +6,7 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 import base64
+import math
 import re
 import warnings
 from typing import Any
@@ -886,6 +887,169 @@ def base_data_quality(meta: dict[str, Any]) -> None:
     )
 
 
+
+
+def page_quotation_calculator() -> None:
+    """Interactive job-level quotation calculator; independent of workbook filters."""
+    show_page_heading(
+        "QUOTATION CALCULATOR",
+        "Estimate job costs, compare margin scenarios and calculate the customer deposit",
+    )
+
+    st.markdown(
+        "<div class='ag-note'>Enter labour payments as the total estimated payment "
+        "for the entire team. The employee count is recorded separately and is not "
+        "multiplied by labour costs.</div>",
+        unsafe_allow_html=True,
+    )
+
+    section("Job details")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        job_id = st.text_input("Job ID (optional)", key="quote_job_id")
+    with c2:
+        service = st.selectbox(
+            "Cleaning service",
+            [
+                "Institutional cleaning", "Post-construction cleaning",
+                "Deep-house cleaning", "Sofa cleaning", "Carpet cleaning",
+                "Fumigation", "Laundry cleaning", "Mattress cleaning",
+                "Car cleaning", "Other",
+            ],
+            key="quote_service",
+        )
+    with c3:
+        employees = st.number_input(
+            "Number of employees required", min_value=1, max_value=100,
+            value=2, step=1, key="quote_employees",
+        )
+
+    section("Estimated job costs", "Enter all amounts in Kenyan shillings")
+    left, right = st.columns(2)
+    with left:
+        materials = st.number_input(
+            "Estimated material costs (KES)", min_value=0.0, value=0.0,
+            step=500.0, key="quote_materials",
+        )
+        labour = st.number_input(
+            "Total labour payments (KES)", min_value=0.0, value=0.0,
+            step=500.0, key="quote_labour",
+            help="Combined estimated payment for all employees.",
+        )
+    with right:
+        transport = st.number_input(
+            "Transport and fuel costs (KES)", min_value=0.0, value=0.0,
+            step=500.0, key="quote_transport",
+        )
+        miscellaneous = st.number_input(
+            "Miscellaneous costs (KES)", min_value=0.0, value=0.0,
+            step=500.0, key="quote_misc",
+        )
+
+    total_cost = materials + labour + transport + miscellaneous
+
+    section("Quotation settings")
+    a, b = st.columns(2)
+    with a:
+        selected = st.selectbox(
+            "Scenario used for the quotation",
+            [
+                "Main comparison scenario (30%)",
+                "Lower margin scenario (20%)",
+                "Higher margin scenario (40%)",
+                "30% target; costs 10% lower",
+                "30% target; costs 10% higher",
+            ],
+            key="quote_selected_scenario",
+        )
+    with b:
+        deposit_rate = st.number_input(
+            "Customer deposit (%)", min_value=0.0, max_value=100.0,
+            value=50.0, step=5.0, key="quote_deposit_rate",
+        )
+
+    scenario_specs = [
+        ("Lower margin scenario", 0.20, 0.00, "Lower margin scenario (20%)"),
+        ("Main comparison scenario", 0.30, 0.00, "Main comparison scenario (30%)"),
+        ("Higher margin scenario", 0.40, 0.00, "Higher margin scenario (40%)"),
+        ("30% target; costs 10% lower", 0.30, -0.10, "30% target; costs 10% lower"),
+        ("30% target; costs 10% higher", 0.30, 0.10, "30% target; costs 10% higher"),
+    ]
+
+    scenario_rows = []
+    for name, margin, cost_change, _ in scenario_specs:
+        scenario_cost = total_cost * (1 + cost_change)
+        quote = math.ceil(scenario_cost / (1 - margin)) if scenario_cost > 0 else 0
+        deposit = math.ceil(quote * deposit_rate / 100)
+        scenario_rows.append({
+            "Scenario": name,
+            "Target margin": f"{margin:.0%}",
+            "Estimated direct cost (KES)": scenario_cost,
+            "Minimum quotation (KES)": quote,
+            f"Deposit at {deposit_rate:.0f}% (KES)": deposit,
+        })
+
+    chosen = next(item for item in scenario_specs if item[3] == selected)
+    chosen_cost = total_cost * (1 + chosen[2])
+    total_quote = math.ceil(chosen_cost / (1 - chosen[1])) if chosen_cost > 0 else 0
+    deposit_amount = math.ceil(total_quote * deposit_rate / 100)
+    balance = max(total_quote - deposit_amount, 0)
+
+    st.divider()
+    section("Quotation results")
+    if total_cost <= 0:
+        st.info("Enter one or more job costs above to calculate the quotation.")
+    else:
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Estimated direct cost", money(total_cost))
+        k2.metric("Total quotation to ask", money(total_quote))
+        k3.metric("Deposit to request", money(deposit_amount))
+
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Remaining balance", money(balance))
+        d2.metric("Employees required", f"{employees:,}")
+        d3.metric("Selected target margin", f"{chosen[1]:.0%}")
+
+        st.caption(
+            f"Service: {service}"
+            + (f" · Job ID: {job_id}" if job_id.strip() else "")
+            + f" · Deposit rate: {deposit_rate:.0f}%"
+        )
+
+        section("Comparison of all quotation scenarios")
+        comparison = pd.DataFrame(scenario_rows)
+        st.dataframe(
+            comparison.style.format({
+                "Estimated direct cost (KES)": "KES {:,.0f}",
+                "Minimum quotation (KES)": "KES {:,.0f}",
+                f"Deposit at {deposit_rate:.0f}% (KES)": "KES {:,.0f}",
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv_data = comparison.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download scenario comparison (CSV)",
+            data=csv_data,
+            file_name="quotation_scenarios.csv",
+            mime="text/csv",
+            key="download_quote_scenarios",
+        )
+
+    with st.expander("How the quotation is calculated"):
+        st.latex(r"C = M + L + T + X")
+        st.latex(r"Q_{\\min} = \\frac{C}{1-m}")
+        st.latex(r"\\text{Deposit} = Q_{\\min} \\times \\text{Deposit rate}")
+        st.latex(r"\\text{Balance} = Q_{\\min} - \\text{Deposit}")
+        st.caption(
+            "The 20%, 30% and 40% margins are scenario assumptions. "
+            "The sensitivity scenarios change estimated direct costs by 10% "
+            "before applying a 30% margin. These estimates are contribution "
+            "pricing guides, not net-profit forecasts."
+        )
+
+
 def page_overview(df: pd.DataFrame, meta: dict[str, Any]) -> None:
     show_page_heading("BUSINESS OVERVIEW", "A consolidated view of jobs, revenue, contribution and collections")
     base_data_quality(meta)
@@ -1214,56 +1378,74 @@ def page_forecast(df: pd.DataFrame, meta: dict[str, Any]) -> None:
 
 
 def app_main() -> None:
-    # Keep the sidebar focused on the workbook and the four global slicers.
-    # Dashboard navigation is moved into the main canvas so it cannot push
-    # Month, Service Type and Location below the visible sidebar area.
     uploaded = None
     with st.sidebar:
         with st.expander("Change Excel workbook (optional)", expanded=False):
             uploaded = st.file_uploader(
                 "Upload your Excel workbook",
                 type=["xlsx"],
-                help="Upload your single workbook containing Customers, Labour_Payments, Material_Usage, Lunch and transport, and General Business Expenditure.",
+                help="Upload your single workbook containing the job/customer sheet and supporting cost and payment sheets.",
             )
+
+    show_hero(
+        "AMAZING GRACE CLEANING SERVICES",
+        "Business performance · Service profitability · Quotation decisions · Cash collections",
+    )
+
+    # Quotation Calculator is deliberately the first page and works without
+    # loading the historical workbook or applying dashboard slicers.
+    page = st.radio(
+        "DASHBOARD NAVIGATION",
+        [
+            "Quotation Calculator",
+            "Business Overview",
+            "Service Performance",
+            "Cost & Quotation",
+            "Payment & Collection",
+            "Monthly Forecast",
+        ],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="ag_dashboard_page",
+    )
+
+    if page == "Quotation Calculator":
+        page_quotation_calculator()
+        st.markdown(
+            "<div class='ag-footer'>Amazing Grace Cleaning Services · "
+            "Quotation estimates are planning guides and require owner approval.</div>",
+            unsafe_allow_html=True,
+        )
+        return
 
     workbook_bytes: bytes | None = uploaded.getvalue() if uploaded is not None else None
     if workbook_bytes is None and DEFAULT_WORKBOOK.exists():
         workbook_bytes = DEFAULT_WORKBOOK.read_bytes()
 
     if workbook_bytes is None:
-        show_hero("BUSINESS ANALYTICS", "Upload your workbook to view the dashboards")
-        st.info("Upload your single Excel workbook in the left sidebar. The workbook should contain the job/customer sheet and the supporting labour, material, staff expense and general expenditure sheets.")
+        st.info(
+            "Upload your Excel workbook in the left sidebar to view the business "
+            "dashboards. The Quotation Calculator is available without a workbook."
+        )
         st.stop()
 
     try:
         sheets = read_workbook(workbook_bytes)
         jobs, meta = load_business_model(sheets)
     except Exception as exc:
-        show_hero("BUSINESS ANALYTICS", "Workbook could not be loaded")
         st.error(f"Unable to prepare the workbook: {exc}")
         with st.expander("Workbook sheets and column names"):
             for name, frame in read_workbook(workbook_bytes).items():
                 st.write(name, list(frame.columns))
         st.stop()
 
-    # Render all slicers before the page selector. This keeps them visible
-    # together in the left panel rather than hiding them below navigation.
     filtered, filters = apply_global_filters(jobs)
 
-    show_hero(
-        "AMAZING GRACE CLEANING SERVICES",
-        "Business performance · Service profitability · Quotation decisions · Cash collections",
-    )
-    page = st.radio(
-        "DASHBOARD NAVIGATION",
-        ["Business Overview", "Service Performance", "Cost & Quotation", "Payment & Collection", "Monthly Forecast"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="ag_dashboard_page",
-    )
-
     if filtered.empty:
-        st.warning("No jobs match the selected filters. Change Year, Month, Service Type or Location in the left panel.")
+        st.warning(
+            "No jobs match the selected filters. Change Year, Month, Service Type "
+            "or Location in the left panel."
+        )
         st.stop()
 
     if page == "Business Overview":
@@ -1274,9 +1456,7 @@ def app_main() -> None:
         page_costs(filtered, meta)
     elif page == "Payment & Collection":
         page_collections(filtered, meta)
-    else:
-        # Forecast page uses the date-filtered job subset. Service and location
-        # slicers are intentionally respected for a coherent filtered outlook.
+    elif page == "Monthly Forecast":
         page_forecast(filtered, meta)
 
     st.markdown(
